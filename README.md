@@ -12,7 +12,7 @@ This project showcases an end-to-end **ELT (Extract, Load, Transform)** pipeline
 
 Below is a screenshot of the final Airflow DAG. You can see the tasks for staging, transforming, and testing the data. 
 
-![Airflow DAG]()
+![Airflow DAG](https://github.com/ndomah/ELT-Pipeline/blob/main/dag.png)
 
 Each box in the DAG represents a dbt model or test that runs in sequence. Once the tasks complete successfully, the pipeline is considered done.
 
