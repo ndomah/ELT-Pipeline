@@ -1,208 +1,118 @@
-# ELT Pipeline with dbt, Snowflake, and Airflow
+# ELT Pipeline using dbt, Snowflake, and Airflow
 
-This project showcases an end-to-end **ELT (Extract, Load, Transform)** pipeline I built using **dbt**, **Snowflake**, and **Airflow**. The goal was to demonstrate how to orchestrate data transformations in Snowflake using dbt, and then automate the entire workflow in Airflow. Below is a walkthrough of the architecture, code, and workflow steps.
-
-## Overview
-
-1. **Snowflake** serves as the cloud data warehouse.
-2. **dbt (data build tool)** handles the transformations (SQL-based data models, tests, and documentation).
-3. **Airflow** orchestrates the entire pipeline, scheduling and running dbt commands automatically.
-
-### DAG in Airflow
-
-Below is a screenshot of the final Airflow DAG. You can see the tasks for staging, transforming, and testing the data. 
-
-![Airflow DAG](https://github.com/ndomah/ELT-Pipeline/blob/main/dag.png)
-
-Each box in the DAG represents a dbt model or test that runs in sequence. Once the tasks complete successfully, the pipeline is considered done.
+This project demonstrates how to build a simple ELT pipeline using [dbt (Data Build Tool)](https://www.getdbt.com/) to transform data in [Snowflake](https://www.snowflake.com/en/), with orchestration managed by [Apache Airflow](https://airflow.apache.org/). This setup showcases a modern data engineering workflow, essential for handling large-scale data transformations efficiently.
 
 
-## Project Steps
+## 1. Setting up Snowflake
+We will use Snowflake as our data warehouse, leveraging the sample dataset TPCH_SF1.
 
-### Step 1: Set Up the Snowflake Environment
-
-First, we create and configure the necessary Snowflake resources (warehouse, database, schema, and role). This snippet demonstrates how to set up and tear down everything quickly:
+### Configuring Access Control
+Snowflake’s RBAC (Role-based Access Control) is utilized to manage permissions. A dedicated `dbt_role` is created and assigned to the user.
 
 ```sql
--- create accounts
-use role accountadmin;
-
-create warehouse dbt_wh with warehouse_size='x-small';
-create database if not exists dbt_db;
-create role if not exists dbt_role;
-
-show grants on warehouse dbt_wh;
-
-grant role dbt_role to user <YOUR_USERNAME>;
-grant usage on warehouse dbt_wh to role dbt_role;
-grant all on database dbt_db to role dbt_role;
-
-use role dbt_role;
-
-create schema if not exists dbt_db.dbt_schema;
-
--- clean up (for teardown)
-use role accountadmin;
-
-drop warehouse if exists dbt_wh;
-drop database if exists dbt_db;
-drop role if exists dbt_role;
+USE ROLE accountadmin;
+CREATE ROLE IF NOT EXISTS dbt_role;
+GRANT ROLE dbt_role TO USER <Snowflake username>;
 ```
-*Tip: Make sure you replace `<YOUR_USERNAME>` with your actual Snowflake username.*
 
-### Step 2: Configure `dbt_profile.yml`
+### Creating the Warehouse and Database
+We create the required warehouse and database for our dbt transformations.
 
-Next, configure your dbt profile to connect to Snowflake. Here, we specify the warehouse and materialization settings:
+```sql
+CREATE WAREHOUSE dbt_wh WITH WAREHOUSE_SIZE='X-SMALL';
+CREATE DATABASE IF NOT EXISTS dbt_db;
+GRANT USAGE ON WAREHOUSE dbt_wh TO ROLE dbt_role;
+GRANT ALL ON DATABASE dbt_db TO ROLE dbt_role;
+USE ROLE dbt_role;
+CREATE SCHEMA IF NOT EXISTS dbt_db.dbt_schema;
+```
+
+
+
+## 2. Setting up dbt Project
+To integrate dbt with Apache Airflow, we use [astronomer-cosmos](https://github.com/astronomer/astronomer-cosmos). The setup involves initializing an Astro project and configuring dbt.
+
+### Initializing the Astro Project
+```bash
+curl -sSL install.astronomer.io | sudo bash -s  # Install Astro CLI
+mkdir elt_project && cd elt_project
+astro dev init
+```
+
+This generates a directory structure including DAGs, plugins, and dependencies.
+
+### Creating the dbt Project
+```bash
+python -m venv dbt-env  # Create virtual environment
+source dbt-env/bin/activate  # Activate environment
+pip install dbt-core dbt-snowflake  # Install dbt
+mkdir dags/dbt && cd dags/dbt
+dbt init  # Initialize dbt project
+```
+
+During initialization, provide Snowflake credentials and database details.
+
+
+## 3. Building the Data Model
+We process the `orders` and `lineitem` tables from TPCH_SF1.
+
+![Data Model](../mnt/data/data-model.png)
+
+### Configuring dbt Models
+We define sources and transformations in dbt, specifying materialization strategies:
 
 ```yaml
 models:
-  snowflake_workshop:
+  data_pipeline:
     staging:
-      materialized: view
+      +materialized: view
       snowflake_warehouse: dbt_wh
     marts:
-      materialized: table
+      +materialized: table
       snowflake_warehouse: dbt_wh
 ```
-*Note: The `dbt_profile.yml` also needs your Snowflake credentials. Typically, you’ll store those securely in a profiles.yml file, not in your repo.*
 
-
-### Step 3: Create Source and Staging Files
-
-We declare data sources in dbt so that we can reference them later in our staging models.
-
-`models/staging/tpch_sources.yml`
-
-```yaml
-version: 2
-
-sources:
-  - name: tpch
-    database: snowflake_sample_data
-    schema: tpch_sf1
-    tables:
-      - name: orders
-        columns:
-          - name: o_orderkey
-            tests:
-              - unique
-              - not_null
-      - name: lineitem
-        columns:
-          - name: l_orderkey
-            tests:
-              - relationships:
-                  to: source('tpch', 'orders')
-                  field: o_orderkey
-```
-Then we create staging models that simplify or rename the raw columns:
-
-`models/staging/stg_tpch_orders.sql`
+The `models/staging/stg_tpch_orders.sql` transformation extracts required fields from `orders`:
 
 ```sql
-select
-    o_orderkey as order_key,
-    o_custkey as customer_key,
-    o_orderstatus as status_code,
-    o_totalprice as total_price,
-    o_orderdate as order_date
-from
-    {{ source('tpch', 'orders') }}
+SELECT
+    o_orderkey AS order_key,
+    o_custkey AS customer_key,
+    o_orderstatus AS status_code,
+    o_totalprice AS total_price,
+    o_orderdate AS order_date
+FROM {{ source('tpch', 'orders') }}
 ```
 
-`models/staging/stg_tpch_line_items.sql`
+Similarly, `models/staging/stg_tpch_line_item.sql` processes `lineitem` and creates a surrogate key:
 
 ```sql
-select
-    {{
-        dbt_utils.generate_surrogate_key([
-            'l_orderkey',
-            'l_linenumber'
-        ])
-    }} as order_item_key,
-    l_orderkey as order_key,
-    l_partkey as part_key,
-    l_linenumber as line_number,
-    l_quantity as quantity,
-    l_extendedprice as extended_price,
-    l_discount as discount_percentage,
-    l_tax as tax_rate
-from
-    {{ source('tpch', 'lineitem') }}
+SELECT
+    {{ dbt_utils.generate_surrogate_key(['l_orderkey', 'l_linenumber']) }} AS order_item_key,
+    l_orderkey AS order_key,
+    l_partkey AS part_key,
+    l_linenumber AS line_number,
+    l_quantity AS quantity,
+    l_extendedprice AS extended_price,
+    l_discount AS discount_percentage,
+    l_tax AS tax_rate
+FROM {{ source('tpch', 'lineitem') }}
 ```
 
-### Step 4: Macros (D.R.Y. - Don’t Repeat Yourself)
-
-In dbt, macros help us reuse code. Here’s a simple macro to calculate discounted amounts:
-
-`macros/pricing.sql`
+The fact table `fct_orders.sql` integrates orders and order summaries:
 
 ```sql
-{% macro discounted_amount(extended_price, discount_percentage, scale=2) %}
-    (-1 * {{extended_price}} * {{discount_percentage}})::decimal(16, {{ scale }})
-{% endmacro %}
-```
-
-### Step 5: Transform Models (Fact Tables / Data Marts)
-
-We build intermediate and final (fact) tables. The intermediate table `int_order_items` enriches data by joining orders and line items, and then we aggregate those results in `int_order_items_summary`.
-
-`models/marts/int_order_items.sql`
-
-```sql
-select
-    line_item.order_item_key,
-    line_item.part_key,
-    line_item.line_number,
-    line_item.extended_price,
-    orders.order_key,
-    orders.customer_key,
-    orders.order_date,
-    {{ discounted_amount('line_item.extended_price', 'line_item.discount_percentage') }} as item_discount_amount
-from
-    {{ ref('stg_tpch_orders') }} as orders
-join
-    {{ ref('stg_tpch_line_items') }} as line_item
-        on orders.order_key = line_item.order_key
-order by
-    orders.order_date
-```
-
-`models/marts/int_order_items_summary.sql`
-
-```sql
-select 
-    order_key,
-    sum(extended_price) as gross_item_sales_amount,
-    sum(item_discount_amount) as item_discount_amount
-from
-    {{ ref('int_order_items') }}
-group by
-    order_key
-```
-
-Finally, we create our fact model to combine the summary with the orders:
-
-`models/marts/fct_orders.sql`
-
-```sql
-select
+SELECT
     orders.*,
     order_item_summary.gross_item_sales_amount,
     order_item_summary.item_discount_amount
-from
-    {{ref('stg_tpch_orders')}} as orders
-join
-    {{ref('int_order_items_summary')}} as order_item_summary
-    on orders.order_key = order_item_summary.order_key
-order by order_date
+FROM {{ ref('stg_tpch_orders') }} AS orders
+JOIN {{ ref('dim_order_items_summary') }} AS order_item_summary
+    ON orders.order_key = order_item_summary.order_key
+ORDER BY order_date
 ```
 
-### Step 6: Tests
-
-dbt supports both generic and custom (singular) tests. Generic tests are defined in YAML and run automatically, while singular tests are SQL queries that return failing rows.
-
-**Generic Tests:** `models/marts/generic_tests.yml`
+Tests ensure data integrity, checking constraints such as unique `order_key` values.
 
 ```yaml
 models:
@@ -215,107 +125,80 @@ models:
           - relationships:
               to: ref('stg_tpch_orders')
               field: order_key
-              severity: warn
-      - name: status_code
-        tests:
-          - accepted_values:
-              values: ['P', 'O', 'F']
 ```
 
-**Singular Tests**
-
-- `tests/fct_orders_discount.sql` checks if there are any unexpected positive discounts:
-
-```sql
-select
-    *
-from
-    {{ref('fct_orders')}}
-where
-    item_discount_amount > 0
+Running dbt:
+```bash
+dbt test  # Run tests
+dbt run  # Execute transformations
+dbt build  # Execute and test
 ```
 
-- `tests/fct_orders_date_valid.sql` ensures order_date is in a sensible range:
 
-```sql
-select
-    *
-from
-    {{ref('fct_orders')}}
-where
-    date(order_date) > CURRENT_DATE()
-    or date(order_date) < date('1990-01-01')
-```
+## 4. Orchestrating with Airflow
+We configure Airflow to run dbt models using the [astronomer-cosmos](https://github.com/astronomer/astronomer-cosmos) package.
 
-### Step 7: Deploy on Airflow
-
-Airflow coordinates the dbt runs. We install `dbt-snowflake` and relevant providers in the Airflow Docker container, then configure a Snowflake connection in the Airflow UI.
-
-`dockerfile`
+### Configuring Airflow
+Modify `Dockerfile` to install dbt inside a virtual environment:
 
 ```dockerfile
+FROM quay.io/astronomer/astro-runtime:11.4.0
 RUN python -m venv dbt_venv && source dbt_venv/bin/activate && \
     pip install --no-cache-dir dbt-snowflake && deactivate
 ```
 
-`requirements.txt`
+Add necessary dependencies in `requirements.txt`:
 
 ```
 astronomer-cosmos
 apache-airflow-providers-snowflake
 ```
 
-**Airflow Snowflake Connection**
-
-```json
-{
-  "account": "<account_locator>-<account_name>",
-  "warehouse": "dbt_wh",
-  "database": "dbt_db",
-  "role": "dbt_role",
-  "insecure_mode": false
-}
-```
-
-`dbt_dag.py`
+### Creating the DAG
+Define `dags/dbt/dbt_dag.py` to run dbt models:
 
 ```python
 import os
 from datetime import datetime
-
-from cosmos import DbtDag, ProjectConfig, ProfileConfig, ExecutionConfig
+from cosmos import DbtDag, ProjectConfig, ProfileConfig, ExecutionConfig, RenderConfig
 from cosmos.profiles import SnowflakeUserPasswordProfileMapping
+from cosmos.constants import TestBehavior
 
 profile_config = ProfileConfig(
-    profile_name="default",
-    target_name="dev",
+    profile_name='default',
+    target_name='dev',
     profile_mapping=SnowflakeUserPasswordProfileMapping(
-        conn_id="snowflake_conn", 
-        profile_args={"database": "dbt_db", "schema": "dbt_schema"},
+        conn_id='snowflake_conn',
+        profile_args={'database': 'dbt_db', 'schema': 'dbt_schema'}
     )
 )
 
 dbt_snowflake_dag = DbtDag(
-    project_config=ProjectConfig("/usr/local/airflow/dags/dbt/data_pipeline"),
-    operator_args={"install_deps": True},
+    project_config=ProjectConfig('/usr/local/airflow/dags/dbt/data_pipeline'),
+    operator_args={'install_deps': True},
     profile_config=profile_config,
-    execution_config=ExecutionConfig(
-        dbt_executable_path=f"{os.environ['AIRFLOW_HOME']}/dbt_venv/bin/dbt"
-    ),
-    schedule_interval="@daily",
-    start_date=datetime(2023, 9, 10),
+    execution_config=ExecutionConfig(dbt_executable_path=f"{os.environ['AIRFLOW_HOME']}/dbt_venv/bin/dbt"),
+    render_config=RenderConfig(test_behavior=TestBehavior.AFTER_ALL),
+    schedule_interval='@daily',
+    start_date=datetime(2024, 6, 1),
     catchup=False,
-    dag_id="dbt_dag",
+    dag_id='dbt_dag'
 )
 ```
 
-Once deployed, this DAG will extract data from Snowflake’s sample data, load it into staging models, and transform it into analytics-ready tables—complete with dbt’s built-in testing.
+### Running Airflow
+Start Airflow locally:
+
+```bash
+astro dev start
+```
+
+Once running, access the Airflow UI at [http://localhost:8080](http://localhost:8080).
+
+### DAG Execution
+![DAG Execution](../mnt/data/dbt_dag_success.png)
+
+After setting up the Snowflake connection in Airflow, trigger the DAG to orchestrate the ELT pipeline successfully.
 
 ## Conclusion
-
-With this project, I demonstrated:
-- **Data Warehousing**: Setting up Snowflake resources and working with sample TPCH data.
-- **dbt for ELT**: Building modular SQL transformations, leveraging macros, and running automated tests.
-- **Orchestration with Airflow**: Scheduling and running dbt commands via a DAG, ensuring tasks are performed in the correct order.
-
-This end-to-end pipeline shows the typical workflow for a modern data stack: raw data → staging → transformations → analytics. By incorporating automated tests, you ensure data quality at each step.
+This project showcases a modern ELT pipeline with dbt, Snowflake, and Airflow, demonstrating efficient data transformation and orchestration workflows—ideal for building scalable and maintainable data pipelines.
