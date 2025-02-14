@@ -56,7 +56,7 @@ During initialization, provide Snowflake credentials and database details.
 ## 3. Building the Data Model
 We process the `orders` and `lineitem` tables from TPCH_SF1.
 
-![Data Model](../mnt/data/data-model.png)
+![Data Model](https://github.com/ndomah/ELT-Pipeline/blob/main/img/data-model.png)
 
 ### Configuring dbt Models
 We define sources and transformations in dbt, specifying materialization strategies:
@@ -196,7 +196,7 @@ astro dev start
 Once running, access the Airflow UI at [http://localhost:8080](http://localhost:8080).
 
 ### DAG Execution
-![DAG Execution](../mnt/data/dbt_dag_success.png)
+![DAG Execution](https://github.com/ndomah/ELT-Pipeline/blob/main/img/dbt_dag_success.png)
 
 After setting up the Snowflake connection in Airflow, trigger the DAG to orchestrate the ELT pipeline successfully.
 
