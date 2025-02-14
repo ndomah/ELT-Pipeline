@@ -72,7 +72,7 @@ models:
       snowflake_warehouse: dbt_wh
 ```
 
-The `models/staging/stg_tpch_orders.sql` transformation extracts required fields from `orders`:
+The [`models/staging/stg_tpch_orders.sql`](https://github.com/ndomah/ELT-Pipeline/blob/main/dags/dbt/data_pipeline/models/staging/stg_tpch_orders.sql) transformation extracts required fields from `orders`:
 
 ```sql
 SELECT
@@ -84,7 +84,7 @@ SELECT
 FROM {{ source('tpch', 'orders') }}
 ```
 
-Similarly, `models/staging/stg_tpch_line_item.sql` processes `lineitem` and creates a surrogate key:
+Similarly, [`models/staging/stg_tpch_line_item.sql`](https://github.com/ndomah/ELT-Pipeline/blob/main/dags/dbt/data_pipeline/models/staging/stg_tpch_line_item.sql) processes `lineitem` and creates a surrogate key:
 
 ```sql
 SELECT
@@ -99,7 +99,7 @@ SELECT
 FROM {{ source('tpch', 'lineitem') }}
 ```
 
-The fact table `fct_orders.sql` integrates orders and order summaries:
+The fact table [`fct_orders.sql`](https://github.com/ndomah/ELT-Pipeline/blob/main/dags/dbt/data_pipeline/models/marts/fct_orders.sql) integrates orders and order summaries:
 
 ```sql
 SELECT
@@ -139,7 +139,7 @@ dbt build  # Execute and test
 We configure Airflow to run dbt models using the [astronomer-cosmos](https://github.com/astronomer/astronomer-cosmos) package.
 
 ### Configuring Airflow
-Modify `Dockerfile` to install dbt inside a virtual environment:
+Modify [`Dockerfile`](https://github.com/ndomah/ELT-Pipeline/blob/main/Dockerfile) to install dbt inside a virtual environment:
 
 ```dockerfile
 FROM quay.io/astronomer/astro-runtime:11.4.0
@@ -147,7 +147,7 @@ RUN python -m venv dbt_venv && source dbt_venv/bin/activate && \
     pip install --no-cache-dir dbt-snowflake && deactivate
 ```
 
-Add necessary dependencies in `requirements.txt`:
+Add necessary dependencies in [`requirements.txt`](https://github.com/ndomah/ELT-Pipeline/blob/main/requirements.txt):
 
 ```
 astronomer-cosmos
@@ -155,7 +155,7 @@ apache-airflow-providers-snowflake
 ```
 
 ### Creating the DAG
-Define `dags/dbt/dbt_dag.py` to run dbt models:
+Define [`dags/dbt/dbt_dag.py`](https://github.com/ndomah/ELT-Pipeline/blob/main/dags/dbt/dbt_dag.py) to run dbt models:
 
 ```python
 import os
